@@ -5,4 +5,4 @@ edition = "2021"
 
 [dependencies]
 itertools = "0.13.0"
-inkwell = { git = "https://github.com/TheDan64/inkwell", branch = "master", features = ["llvm18-0"] }
+inkwell = { version = "0.8.0", features = ["llvm18-1"] }
