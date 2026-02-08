@@ -108,8 +108,6 @@ pub enum SemanticError {
 
 impl SemanticError {
     pub fn to_string(self, source: &str) -> String {
-        let mut string = String::new();
-        let lines = source.lines().collect::<Vec<_>>();
         let span = match &self {
             SemanticError::ExpressionTypeMismatch { expr, .. } => expr.span,
             SemanticError::FunctionNotFound { expr, .. } => expr.span,
@@ -184,78 +182,8 @@ impl SemanticError {
             SemanticError::UnreachableCode { .. } => "this code is unreachable".to_string(),
         };
 
-        string.push_str(&format!("\x1b[31merror\x1b[0m: {}\n", error_text));
-        let first_line = span.start.line_span.0 - 1;
-        let last_line = span.end.line_span.0 - 1;
-        let pre_first_line = first_line.checked_sub(1);
-        let post_last_line = last_line + 1;
-        let max_line_num_len = post_last_line.to_string().len();
-
-        if let Some(idx) = pre_first_line {
-            let line = lines[idx as usize];
-            let line_num = idx + 1;
-            let line_num_str = line_num.to_string();
-            let padding = max_line_num_len - line_num_str.len();
-            string.push_str(&format!(
-                " \x1b[34m{}{} | \x1b[0m",
-                " ".repeat(padding),
-                line_num_str
-            ));
-            string.push_str(line);
-            string.push('\n');
-        }
-
-        for i in first_line..=last_line {
-            let line = lines[i as usize];
-            let line_num = i + 1;
-            let line_num_str = line_num.to_string();
-            let padding = max_line_num_len - line_num_str.len();
-            let col_start = if i == first_line {
-                span.start.col_span.0 - 1
-            } else {
-                0
-            };
-            let col_end = if i == last_line {
-                span.end.col_span.1 - 1
-            } else {
-                line.len() as u32
-            };
-            let mut caret = String::new();
-            for _ in 0..col_start {
-                caret.push(' ');
-            }
-            for _ in col_start..col_end {
-                caret.push('^');
-            }
-            string.push_str(&format!(
-                " \x1b[34m{}{} | \x1b[0m",
-                " ".repeat(padding),
-                line_num_str
-            ));
-            string.push_str(line);
-            string.push('\n');
-            string.push_str(&format!(
-                " \x1b[34m{} | \x1b[0m",
-                " ".repeat(max_line_num_len)
-            ));
-            string.push_str(&format!("\x1b[31m{}\x1b[0m\n", caret));
-        }
-
-        if post_last_line < lines.len() as u32 {
-            let line = lines[post_last_line as usize];
-            let line_num = post_last_line + 1;
-            let line_num_str = line_num.to_string();
-            let padding = max_line_num_len - line_num_str.len();
-            string.push_str(&format!(
-                " \x1b[34m{}{} | \x1b[0m",
-                " ".repeat(padding),
-                line_num_str
-            ));
-            string.push_str(line);
-            string.push('\n');
-        }
-
-        string
+        let error = crate::error::error((span.start.line_span.0, span.end.line_span.1), (span.start.col_span.0, span.end.col_span.1), source);
+        format!("{}\n{}", error_text, error)
     }
 }
 

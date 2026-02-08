@@ -26,9 +26,12 @@ fn main() {
     let llvm_module = llvm_context.create_module("main");
     let mut codegen = dexterws_compiler::codegen::CodeGen::new(&llvm_context, llvm_module);
     codegen.generate(new_ast);
-    codegen.spit_out();
-    codegen.verify();
+    //codegen.spit_out();
+    let verification = codegen.verify();
+    if let Err(err) = verification {
+        println!("Verification failed: {}", err.to_string());
+        return;
+    }
     codegen.spit_out_object(file_name);
-    let tst_path = std::path::Path::new("./test");
-    println!("{}", tst_path.display());
+    println!("Compilation successful!");
 }

@@ -58,9 +58,13 @@ impl<'a> CodeGen<'a> {
         self.llvm_module.print_to_stderr();
     }
 
-    pub fn verify(&self) {
+    pub fn verify(&self) -> Result<(), String> {
         let verify = self.llvm_module.verify();
-        println!("{:?}", verify);
+        if verify.is_ok() {
+            Ok(())
+        } else {
+            Err(verify.err().unwrap().to_string())
+        }
     }
 
     pub fn spit_out_object(&self, file_name: &str) {
@@ -633,7 +637,6 @@ impl<'a> CodeGen<'a> {
         if let Some(or) = or {
             let or_block = self.context.append_basic_block(function, "if_or");
             let exited_early = self.generate_block(or, or_block);
-            println!("exited_early: {}", exited_early);
             if !exited_early {
                 self.llvm_builder
                     .build_unconditional_branch(end_block)
