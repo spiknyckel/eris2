@@ -119,10 +119,10 @@ impl<'a> CodeGen<'a> {
 
     pub fn declare_functions(&mut self, module: &Module) {
         // Generate builtin functions
-        //self.generate_printf();
-        //self.generate_iprint();
-        //self.generate_fprint();
-        //self.generate_bprint();
+        self.generate_printf();
+        self.generate_iprint();
+        self.generate_fprint();
+        self.generate_bprint();
 
         // Declare all user functions
         for function in module.functions.iter() {

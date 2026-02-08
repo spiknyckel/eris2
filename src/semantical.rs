@@ -3,7 +3,9 @@ use std::collections::HashMap;
 use crate::{
     chainmap::ChainMap,
     parsing::{
-        self, Arg, Args, Assignment, Ast, BinOpKind, Block, CallArgs, Expr, ExprKind, Function, FunctionSignature, Identifier, ItemKind, LiteralKind, NodeLocation, Statement, StatementKind, Struct, Type, TypeKind, UnaryOpKind
+        self, Arg, Args, Assignment, Ast, BinOpKind, Block, CallArgs, Expr, ExprKind, Function,
+        FunctionSignature, Identifier, ItemKind, LiteralKind, NodeLocation, Statement,
+        StatementKind, Struct, Type, TypeKind, UnaryOpKind,
     },
     tokenizing::TokenLocation,
 };
@@ -42,12 +44,12 @@ pub struct SemanticAnalyzer {
     current_function: Option<String>,
 }
 
-//const BUILTINS: &[(&str, Type, Type)] = &[
-//    ("iprint", Type::Int, Type::Int),
-//    ("fprint", Type::Float, Type::Int),
-//    ("bprint", Type::Bool, Type::Int),
-//    ("printf", Type::String, Type::Int),
-//];
+const BUILTINS: &[(&str, TypeKind, TypeKind)] = &[
+    ("iprint", TypeKind::Int, TypeKind::Int),
+    ("fprint", TypeKind::Float, TypeKind::Int),
+    ("bprint", TypeKind::Bool, TypeKind::Int),
+    ("printf", TypeKind::String, TypeKind::Int),
+];
 
 #[derive(Debug, Clone)]
 pub enum SemanticError {
@@ -196,7 +198,8 @@ impl SemanticError {
             SemanticError::ReturnTypeMismatch { statement, .. } => statement.span,
             SemanticError::UnsupportedBinOp { expr, .. } => expr.span,
             SemanticError::UnreachableCode { statement } => statement.span,
-        }.file_id()
+        }
+        .file_id()
     }
 }
 
@@ -221,7 +224,7 @@ impl SemanticAnalyzer {
             structs: HashMap::new(),
         };
 
-        //self.declare_builtins();
+        self.declare_builtins();
         self.declare_structs(&ast)?;
         self.declare_functions(&ast)?;
 
@@ -243,18 +246,36 @@ impl SemanticAnalyzer {
         Ok(module)
     }
 
-    //fn declare_builtins(&mut self) {
-    //    for (name, arg_ty, ret_ty) in BUILTINS {
-    //        let sig = FunctionSignature {
-    //            name: Identifier {
-    //                value: name.to_string(),
-    //                span: NodeLocation::NULL,               },
-    //            args: vec![("arg".to_string(), arg_ty.clone())],
-    //            ret_ty: ret_ty.clone(),
-    //        };
-    //        self.functions.insert(sig.name.value.clone(), sig);
-    //    }
-    //}
+    fn declare_builtins(&mut self) {
+        for (name, arg_ty, ret_ty) in BUILTINS {
+            let sig = FunctionSignature {
+                name: Identifier {
+                    value: name.to_string(),
+                    span: NodeLocation::null(),
+                },
+                args: Args {
+                    args: vec![Arg {
+                        name: Identifier {
+                            value: "value".to_string(),
+                            span: NodeLocation::null(),
+                        },
+                        ty: Type {
+                            kind: arg_ty.clone(),
+                            span: NodeLocation::null(),
+                        },
+                        span: NodeLocation::null(),
+                    }],
+                    variadic: false,
+                    span: NodeLocation::null(),
+                },
+                ret_ty: Some(Type {
+                    kind: ret_ty.clone(),
+                    span: NodeLocation::null(),
+                }),
+            };
+            self.functions.insert(sig.name.value.clone(), sig);
+        }
+    }
 
     fn declare_functions(&mut self, ast: &Ast) -> SemanticResult<()> {
         for item in &ast.nodes {
@@ -478,9 +499,7 @@ impl SemanticAnalyzer {
                 if let Some(var) = self.variables.get(&var.value) {
                     Ok(var.clone())
                 } else {
-                    Err(SemanticError::VariableNotFound {
-                        ident: var.clone(),
-                    })
+                    Err(SemanticError::VariableNotFound { ident: var.clone() })
                 }
             }
             ExprKind::BinOp(_) => self.analyze_binop(expr),

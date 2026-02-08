@@ -71,6 +71,13 @@ impl NodeLocation {
     pub fn file_id(&self) -> usize {
         self.start.file_id()
     }
+
+    pub fn null() -> Self {
+        Self {
+            start: TokenLocation::null(),
+            end: TokenLocation::null(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

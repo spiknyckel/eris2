@@ -139,6 +139,14 @@ impl TokenLocation {
     pub fn col_end(&self) -> u32 {
         self.col_span().1
     }
+
+    pub fn null() -> Self {
+        Self {
+            file_id: usize::MAX,
+            start: (0, 0),
+            end: (0, 0),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
