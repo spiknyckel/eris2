@@ -21,7 +21,7 @@
             pkgs.llvmPackages_14.llvm.dev
           ];
 
-          LLVM_SYS_180_PREFIX = pkgs.llvmPackages_18.llvm.dev;
+          LLVM_SYS_181_PREFIX = pkgs.llvmPackages_18.llvm.dev;
         };
   };
 }

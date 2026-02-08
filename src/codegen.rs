@@ -172,7 +172,7 @@ impl<'a> CodeGen<'a> {
             .llvm_builder
             .build_call(printf, &[fmt.as_pointer_value().into(), arg.into()], "call")
             .unwrap();
-        let call_value = call.try_as_basic_value().left().unwrap();
+        let call_value = call.try_as_basic_value().unwrap_basic();
         self.llvm_builder.build_return(Some(&call_value)).unwrap();
     }
 
@@ -192,7 +192,7 @@ impl<'a> CodeGen<'a> {
             .llvm_builder
             .build_call(printf, &[fmt.as_pointer_value().into(), arg.into()], "call")
             .unwrap();
-        let call_value = call.try_as_basic_value().left().unwrap();
+        let call_value = call.try_as_basic_value().unwrap_basic();
         self.llvm_builder.build_return(Some(&call_value)).unwrap();
     }
 
@@ -233,7 +233,7 @@ impl<'a> CodeGen<'a> {
                 "call",
             )
             .unwrap();
-        let call_value = call.try_as_basic_value().left().unwrap();
+        let call_value = call.try_as_basic_value().unwrap_basic();
         self.llvm_builder.build_return(Some(&call_value)).unwrap();
     }
 
@@ -607,8 +607,7 @@ impl<'a> CodeGen<'a> {
             .build_call(function, &llvm_args, "call")
             .unwrap()
             .try_as_basic_value()
-            .left()
-            .unwrap()
+            .unwrap_basic()
     }
 
     pub fn generate_assignment(&mut self, assignment: &Assignment) {
