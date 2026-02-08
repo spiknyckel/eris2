@@ -24,6 +24,8 @@
 // <loop> ::= "loop" <ws> <block>
 // <call> ::= <ident> <ws> "(" <args> ")"
 
+use std::ops::Deref;
+
 use itertools::{peek_nth, PeekNth};
 
 use crate::tokenizing::{
@@ -31,13 +33,48 @@ use crate::tokenizing::{
 };
 
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct NodeSpan {
-    pub start: TokenLocation,
-    pub end: TokenLocation,
+pub struct NodeLocation {
+    start: TokenLocation,
+    end: TokenLocation,
+}
+
+impl NodeLocation {
+    pub fn new(start: TokenLocation, end: TokenLocation) -> Self {
+        Self {
+            start,
+            end,
+        }
+    }
+    pub fn merge(&self, other: &NodeLocation) -> NodeLocation {
+        NodeLocation {
+            start: self.start,
+            end: other.end,
+        }
+    }
+
+    pub fn line_span(&self) -> (u32, u32) {
+        (self.start.line_span().0, self.end.line_span().1)
+    }
+
+    pub fn col_span(&self) -> (u32, u32) {
+        (self.start.col_span().0, self.end.col_span().1)
+    }
+
+    pub fn start(&self) -> TokenLocation {
+        self.start
+    }
+
+    pub fn end(&self) -> TokenLocation {
+        self.end
+    }
+
+    pub fn file_id(&self) -> usize {
+        self.start.file_id()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Type {
+pub enum TypeKind {
     Int,
     Float,
     Bool,
@@ -46,15 +83,29 @@ pub enum Type {
     Struct(String),
 }
 
-impl std::fmt::Display for Type {
+#[derive(Debug, Clone)]
+pub struct Type {
+    pub kind: TypeKind,
+    pub span: NodeLocation,
+}
+
+impl Deref for Type {
+    type Target = TypeKind;
+
+    fn deref(&self) -> &Self::Target {
+        &self.kind
+    }
+}
+
+impl std::fmt::Display for TypeKind {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        let s = match self {
-            Type::Int => "int",
-            Type::Float => "float",
-            Type::Bool => "bool",
-            Type::Void => "void",
-            Type::String => "string",
-            Type::Struct(s) => s,
+        let s = match &self {
+            TypeKind::Int => "int",
+            TypeKind::Float => "float",
+            TypeKind::Bool => "bool",
+            TypeKind::Void => "void",
+            TypeKind::String => "string",
+            TypeKind::Struct(s) => s,
         };
         write!(f, "{}", s)
     }
@@ -72,22 +123,46 @@ pub enum ItemKind {
     Struct(Struct),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Field {
     pub name: Identifier,
     pub ty: Type,
+    pub span: NodeLocation,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+pub struct Fields {
+    pub fields: Vec<Field>,
+    pub span: NodeLocation,
+}
+
+impl Deref for Fields {
+    type Target = Vec<Field>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.fields
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Struct {
     pub name: Identifier,
-    pub fields: Vec<Field>,
+    pub fields: Fields,
+    pub span: NodeLocation,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Identifier {
     pub value: String,
-    pub span: NodeSpan,
+    pub span: NodeLocation,
+}
+
+impl Deref for Identifier {
+    type Target = String;
+
+    fn deref(&self) -> &Self::Target {
+        &self.value
+    }
 }
 
 #[derive(Debug)]
@@ -95,25 +170,48 @@ pub struct Item {
     pub kind: ItemKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+pub struct Arg {
+    pub name: Identifier,
+    pub ty: Type,
+    pub span: NodeLocation,
+}
+
+#[derive(Debug, Clone)]
+pub struct Args {
+    pub args: Vec<Arg>,
+    pub variadic: bool,
+    pub span: NodeLocation,
+}
+
+impl Deref for Args {
+    type Target = Vec<Arg>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.args
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct FunctionSignature {
     pub name: Identifier,
-    pub args: Vec<(String, Type)>,
-    pub ret_ty: Type,
+    pub args: Args,
+    pub ret_ty: Option<Type>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Function {
     pub sig: FunctionSignature,
-    pub body: Block,
+    pub body: Option<Block>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Block {
     pub stmts: Vec<Statement>,
+    pub span: NodeLocation,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum StatementKind {
     Expr(Expr),
     Decl(Assignment),
@@ -130,19 +228,20 @@ pub enum StatementKind {
     Return(Option<Box<Expr>>),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Statement {
     pub kind: StatementKind,
-    pub span: NodeSpan,
+    pub span: NodeLocation,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Assignment {
     pub assignee: Expr,
     pub value: Expr,
+    pub span: NodeLocation,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum BinOpKind {
     Add,
     Sub,
@@ -195,14 +294,14 @@ impl BinOpKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct BinOp {
     pub kind: BinOpKind,
     pub lhs: Box<Expr>,
     pub rhs: Box<Expr>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum UnaryOpKind {
     Neg,
     Not,
@@ -217,7 +316,21 @@ pub enum LiteralKind {
     String(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
+pub struct CallArgs {
+    pub args: Vec<Expr>,
+    pub span: NodeLocation,
+}
+
+impl Deref for CallArgs {
+    type Target = Vec<Expr>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.args
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum ExprKind {
     Literal(LiteralKind),
     Var(Identifier),
@@ -227,8 +340,8 @@ pub enum ExprKind {
         rhs: Box<Expr>,
     },
     Call {
-        name: String,
-        args: Vec<Expr>,
+        name: Identifier,
+        args: CallArgs,
     },
     FieldAccess {
         lhs: Box<Expr>,
@@ -240,13 +353,14 @@ pub enum ExprKind {
     },
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Expr {
     pub kind: ExprKind,
-    pub span: NodeSpan,
+    pub span: NodeLocation,
 }
 
 pub struct Parser<I: Iterator<Item = Token>> {
+    file_id: usize,
     tokens: PeekNth<I>,
     last_token: Option<Token>,
 }
@@ -254,26 +368,42 @@ pub struct Parser<I: Iterator<Item = Token>> {
 #[derive(Debug)]
 pub enum ParsingError {
     UnexpectedToken(Token),
+    ExpectedAnotherToken { expected: TokenKind, got: Token },
     UnexpectedEndOfInput,
 }
 
 impl ParsingError {
     pub fn to_string(self, source: &str) -> String {
-        match self {
-            ParsingError::UnexpectedToken(token) => {
-                let error = crate::error::error(
-                    (token.location.line_span.0, token.location.line_span.1),
-                    (token.location.col_span.0, token.location.col_span.1),
-                    source,
-                );
+        let (msg, location) = match self {
+            ParsingError::UnexpectedToken(token) => (
                 format!(
-                        "\x1b[31merror\x1b[0m: unexpected token at {}:{}\n{}",
-                        token.location.line_span.0, token.location.col_span.0, error
-                )
-            }
+                    "\x1b[31merror\x1b[0m: unexpected token at {}:{}\n",
+                    token.location.line_start(), token.location.col_start()
+                ),
+                token.location,
+            ),
+            ParsingError::ExpectedAnotherToken { expected, got } => (
+                format!(
+                    "\x1b[31merror\x1b[0m: expected token {:?} at {}:{}\n",
+                    expected, got.location.line_start(), got.location.col_start()
+                ),
+                got.location,
+            ),
             ParsingError::UnexpectedEndOfInput => {
-                "\x1b[31merror\x1b[0m: unexpected end of input".to_string()
+                return "\x1b[31merror\x1b[0m: unexpected end of input".to_string();
             }
+        };
+        let error = crate::error::error(
+            location.line_span(), location.col_span(), source
+        );
+        format!("{}{}", msg, error)
+    }
+
+    pub fn file_id(&self) -> usize {
+        match self {
+            ParsingError::UnexpectedToken(token) => token.location.file_id(),
+            ParsingError::ExpectedAnotherToken { got, .. } => got.location.file_id(),
+            ParsingError::UnexpectedEndOfInput => 0,
         }
     }
 }
@@ -281,8 +411,9 @@ impl ParsingError {
 pub type ParsingResult<T> = Result<T, ParsingError>;
 
 impl<I: Iterator<Item = Token>> Parser<I> {
-    pub fn new(tokens: I) -> Self {
+    pub fn new(tokens: I, file_id: usize) -> Self {
         Self {
+            file_id,
             tokens: peek_nth(tokens),
             last_token: None,
         }
@@ -307,20 +438,41 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         Ok(token)
     }
 
+    /// Eat a token and assert that it is of a certain kind
     pub fn eat_and_assert(&mut self, kind: TokenKind) -> ParsingResult<Token> {
         let token = self.eat()?;
         if token.kind == kind {
             Ok(token)
         } else {
-            Err(ParsingError::UnexpectedToken(token))
+            Err(ParsingError::ExpectedAnotherToken {
+                expected: kind,
+                got: token,
+            })
         }
     }
 
+    pub fn peek_and_assert(&mut self, kind: TokenKind) -> ParsingResult<&Token> {
+        let token = self.peek()?;
+        if token.kind == kind {
+            Ok(token)
+        } else {
+            Err(ParsingError::ExpectedAnotherToken {
+                expected: kind,
+                got: token.clone(),
+            })
+        }
+    }
+
+    /// Returns the location of the next token
+    /// without consuming it
     pub fn get_next_location(&mut self) -> ParsingResult<TokenLocation> {
         let token = self.peek()?;
         Ok(token.location)
     }
 
+    /// Returns the location of the last eaten token
+    ///
+    /// If there is no last token, it will return the location of the next token
     pub fn get_location(&mut self) -> ParsingResult<TokenLocation> {
         let token = self.last_token.clone();
         match token {
@@ -350,14 +502,16 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 } else {
                     match self.peek()?.kind {
                         TokenKind::Symbol(SymbolKind::LParen) => {
-                            let _ = self.eat()?;
+                            let lparen = self.eat()?;
                             let mut args = Vec::new();
                             loop {
                                 let token = self.peek()?;
                                 match token.kind {
                                     TokenKind::Symbol(SymbolKind::RParen) => {
-                                        let _ = self.eat()?;
                                         break;
+                                    }
+                                    TokenKind::Symbol(SymbolKind::Comma) => {
+                                        let _ = self.eat()?;
                                     }
                                     _ => {
                                         let expr = self.parse_expr(0)?;
@@ -365,7 +519,23 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                                     }
                                 }
                             }
-                            ExprKind::Call { name: ident, args }
+                            let rparen = self.eat()?;
+                            ExprKind::Call {
+                                name: Identifier {
+                                    value: ident,
+                                    span: NodeLocation::new(
+                                        lhs_token.location,
+                                        lhs_token.location,
+                                    ),
+                                },
+                                args: CallArgs {
+                                    args,
+                                    span: NodeLocation::new(
+                                        lparen.location,
+                                        rparen.location,
+                                    ),
+                                },
+                            }
                         }
                         TokenKind::Symbol(SymbolKind::LBrace) => {
                             let _ = self.eat()?;
@@ -403,20 +573,14 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                             ExprKind::StructInit {
                                 name: Identifier {
                                     value: ident,
-                                    span: NodeSpan {
-                                        start: lhs_token.location,
-                                        end: lhs_token.location,
-                                    },
+                                    span: NodeLocation::new(start, start),
                                 },
                                 fields,
                             }
                         }
                         _ => ExprKind::Var(Identifier {
                             value: ident,
-                            span: NodeSpan {
-                                start: lhs_token.location,
-                                end: lhs_token.location,
-                            },
+                            span: NodeLocation::new(start, start),
                         }),
                     }
                 }
@@ -455,10 +619,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
         let mut lhs = Expr {
             kind: lhs_kind,
-            span: NodeSpan {
-                start,
-                end: self.get_location()?,
-            },
+            span: NodeLocation::new(start, self.get_location()?),
         };
 
         // Left hand recursion
@@ -481,16 +642,13 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                             lhs: Box::new(lhs),
                             field: Identifier {
                                 value: identifier,
-                                span: NodeSpan {
-                                    start: field_token.location,
-                                    end: field_token.location,
-                                },
+                                span: NodeLocation::new(
+                                    field_token.location,
+                                    field_token.location,
+                                ),
                             },
                         },
-                        span: NodeSpan {
-                            start,
-                            end: self.get_location()?,
-                        },
+                        span: NodeLocation::new(start, self.get_location()?),
                     };
                     continue;
                 }
@@ -514,14 +672,41 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                     lhs: Box::new(lhs),
                     rhs: Box::new(rhs),
                 }),
-                span: NodeSpan {
-                    start,
-                    end: self.get_location()?,
-                },
+                span: NodeLocation::new(start, self.get_location()?),
             };
         }
 
         Ok(lhs)
+    }
+
+    pub fn parse_assignment(&mut self, assignee: Expr) -> ParsingResult<Statement> {
+        let equals = self.eat()?;
+        let start = assignee.span.start;
+        let kind = match equals.kind {
+            TokenKind::Symbol(SymbolKind::Walrus) => {
+                let value = self.parse_expr(0)?;
+                let span = assignee.span.merge(&value.span);
+                StatementKind::Decl(Assignment {
+                    assignee,
+                    value,
+                    span,
+                })
+            }
+            TokenKind::Symbol(SymbolKind::AssignEq) => {
+                let value = self.parse_expr(0)?;
+                let span = assignee.span.merge(&value.span);
+                StatementKind::Assign(Assignment {
+                    assignee,
+                    value,
+                    span,
+                })
+            }
+            _ => return Err(ParsingError::UnexpectedToken(equals)),
+        };
+        Ok(Statement {
+            kind,
+            span: NodeLocation::new(start, self.get_location()?),
+        })
     }
 
     pub fn parse_ident(&mut self) -> ParsingResult<Statement> {
@@ -535,11 +720,8 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         };
         match value.as_str() {
             "if" => {
-                let _ = self.eat()?;
-                let open_paren = self.peek()?;
-                if TokenKind::Symbol(SymbolKind::LParen) != open_paren.kind {
-                    return Err(ParsingError::UnexpectedToken(open_paren.clone()));
-                }
+                let _if = self.eat()?;
+                let _lparen = self.peek_and_assert(TokenKind::Symbol(SymbolKind::LParen))?;
                 let cond = self.parse_expr(0)?;
                 let then = self.parse_block()?;
                 let or = if let Ok(token) = self.peek() {
@@ -559,32 +741,23 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 };
                 Ok(Statement {
                     kind,
-                    span: NodeSpan {
-                        start,
-                        end: self.get_location()?,
-                    },
+                    span: NodeLocation::new(start, self.get_location()?),
                 })
             }
             "loop" => {
-                let _ = self.eat()?;
+                let _if = self.eat()?;
                 let body = self.parse_block()?;
                 let kind = StatementKind::Loop { body };
                 Ok(Statement {
                     kind,
-                    span: NodeSpan {
-                        start,
-                        end: self.get_location()?,
-                    },
+                    span: NodeLocation::new(start, self.get_location()?),
                 })
             }
             "break" => {
                 let _ = self.eat()?;
                 Ok(Statement {
                     kind: StatementKind::Break,
-                    span: NodeSpan {
-                        start,
-                        end: self.get_location()?,
-                    },
+                    span: NodeLocation::new(start, self.get_location()?),
                 })
             }
             "return" => {
@@ -603,53 +776,19 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 let kind = StatementKind::Return(value.map(Box::new));
                 Ok(Statement {
                     kind,
-                    span: NodeSpan {
-                        start,
-                        end: self.get_location()?,
-                    },
+                    span: NodeLocation::new(start, self.get_location()?),
                 })
             }
             _ => {
                 let expr = self.parse_expr(0)?;
                 match self.peek()?.kind {
-                    TokenKind::Symbol(SymbolKind::Walrus) => {
-                        let _walrus = self.eat()?;
-                        let value = self.parse_expr(0)?;
-                        let kind = StatementKind::Decl(Assignment {
-                            assignee: expr,
-                            value,
-                        });
-                        Ok(Statement {
-                            kind,
-                            span: NodeSpan {
-                                start,
-                                end: self.get_location()?,
-                            },
-                        })
-                    }
-                    TokenKind::Symbol(SymbolKind::AssignEq) => {
-                        let _equals = self.eat()?;
-                        let value = self.parse_expr(0)?;
-                        let kind = StatementKind::Assign(Assignment {
-                            assignee: expr,
-                            value,
-                        });
-                        Ok(Statement {
-                            kind,
-                            span: NodeSpan {
-                                start,
-                                end: self.get_location()?,
-                            },
-                        })
-                    }
+                    TokenKind::Symbol(SymbolKind::AssignEq)
+                    | TokenKind::Symbol(SymbolKind::Walrus) => self.parse_assignment(expr),
                     _ => {
                         let kind = StatementKind::Expr(expr);
                         Ok(Statement {
                             kind,
-                            span: NodeSpan {
-                                start,
-                                end: self.get_location()?,
-                            },
+                            span: NodeLocation::new(start, self.get_location()?),
                         })
                     }
                 }
@@ -659,16 +798,20 @@ impl<I: Iterator<Item = Token>> Parser<I> {
 
     pub fn parse_type(&mut self) -> ParsingResult<Type> {
         let token = self.eat()?;
-        match &token.kind {
+        let kind = match &token.kind {
             TokenKind::Ident(s) => match s.as_str() {
-                "int" => Ok(Type::Int),
-                "float" => Ok(Type::Float),
-                "bool" => Ok(Type::Bool),
-                "string" => Ok(Type::String),
-                _ => Ok(Type::Struct(s.to_owned())),
+                "int" => TypeKind::Int,
+                "float" => TypeKind::Float,
+                "bool" => TypeKind::Bool,
+                "string" => TypeKind::String,
+                _ => TypeKind::Struct(s.to_owned()),
             },
-            _ => Err(ParsingError::UnexpectedToken(token)),
-        }
+            _ => return Err(ParsingError::UnexpectedToken(token)),
+        };
+        Ok(Type {
+            kind,
+            span: NodeLocation::new(token.location, token.location),
+        })
     }
 
     pub fn parse_field(&mut self) -> ParsingResult<Field> {
@@ -676,10 +819,7 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         let name = match name.kind {
             TokenKind::Ident(s) => Identifier {
                 value: s,
-                span: NodeSpan {
-                    start: name.location,
-                    end: name.location,
-                },
+                span: NodeLocation::new(name.location, name.location),
             },
             _ => return Err(ParsingError::UnexpectedToken(name)),
         };
@@ -689,24 +829,12 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             return Err(ParsingError::UnexpectedToken(colon));
         }
         let ty = self.parse_type()?;
-        Ok(Field { name, ty })
+        let span = name.span.merge(&ty.span);
+        Ok(Field { name, ty, span })
     }
 
-    pub fn parse_struct(&mut self) -> ParsingResult<Struct> {
-        let name = self.eat()?;
-        let name = match name.kind {
-            TokenKind::Ident(s) => Identifier {
-                value: s,
-                span: NodeSpan {
-                    start: name.location,
-                    end: name.location,
-                },
-            },
-            _ => return Err(ParsingError::UnexpectedToken(name)),
-        };
-        let _coloncolon = self.eat_and_assert(TokenKind::Symbol(SymbolKind::ColonColon))?;
-        let _struct = self.eat_and_assert(TokenKind::Ident("struct".to_string()))?;
-        let _lbrace = self.eat_and_assert(TokenKind::Symbol(SymbolKind::LBrace))?;
+    pub fn parse_fields(&mut self) -> ParsingResult<Fields> {
+        let lbrace = self.eat_and_assert(TokenKind::Symbol(SymbolKind::LBrace))?;
         let mut fields = Vec::new();
         loop {
             match self.peek()?.kind {
@@ -715,13 +843,33 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                     self.eat_and_assert(TokenKind::Symbol(SymbolKind::Semicolon))?;
                 }
                 TokenKind::Symbol(SymbolKind::RBrace) => {
-                    let _ = self.eat()?;
                     break;
                 }
                 _ => return Err(ParsingError::UnexpectedToken(self.peek()?.clone())),
             }
         }
-        Ok(Struct { name, fields })
+        let rbrace = self.eat()?;
+        Ok(Fields {
+            fields,
+            span: NodeLocation::new(lbrace.location, rbrace.location),
+        })
+    }
+
+    pub fn parse_struct(&mut self) -> ParsingResult<Struct> {
+        let name = self.eat()?;
+        let name = match name.kind {
+            TokenKind::Ident(s) => Identifier {
+                value: s,
+                span: NodeLocation::new(name.location, name.location),
+            },
+            _ => return Err(ParsingError::UnexpectedToken(name)),
+        };
+        let _coloncolon = self.eat_and_assert(TokenKind::Symbol(SymbolKind::ColonColon))?;
+        let _struct = self.eat_and_assert(TokenKind::Ident("struct".to_string()))?;
+        let fields = self.parse_fields()?;
+        let span = name.span.merge(&fields.span);
+
+        Ok(Struct { name, fields, span })
     }
 
     pub fn parse_item_kind(&mut self) -> ParsingResult<ItemKind> {
@@ -767,60 +915,52 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         Ok(Item { kind })
     }
 
-    pub fn parse_local_name(&mut self) -> ParsingResult<Identifier> {
+    pub fn parse_identifier(&mut self) -> ParsingResult<Identifier> {
         let token = self.eat()?;
         match token.kind {
             TokenKind::Ident(s) => Ok(Identifier {
                 value: s,
-                span: NodeSpan {
-                    start: token.location,
-                    end: token.location,
-                },
+                span: NodeLocation::new(token.location, token.location),
             }),
             _ => Err(ParsingError::UnexpectedToken(token)),
         }
     }
 
-    pub fn parse_local(&mut self) -> ParsingResult<Assignment> {
-        let name = self.parse_expr(0)?;
-        let _walrus = self.eat()?;
-        let value = self.parse_expr(0)?;
-        Ok(Assignment {
-            assignee: name,
-            value,
-        })
-    }
-
-    pub fn parse_function_arg(&mut self) -> ParsingResult<(String, Type)> {
-        let name = self.eat()?;
-        let name = match name.kind {
-            TokenKind::Ident(s) => s,
-            _ => return Err(ParsingError::UnexpectedToken(name)),
-        };
-        let colon = self.eat()?;
+    pub fn parse_function_arg(&mut self) -> ParsingResult<Arg> {
+        let name = self.parse_identifier()?;
+        let colon = self.eat_and_assert(TokenKind::Symbol(SymbolKind::Colon))?;
         if let TokenKind::Symbol(SymbolKind::Colon) = colon.kind {
         } else {
             return Err(ParsingError::UnexpectedToken(colon));
         }
         let ty = self.parse_type()?;
-        Ok((name, ty))
+        let span = name.span.merge(&ty.span);
+        Ok(Arg { name, ty, span })
     }
 
-    pub fn parse_function_args(&mut self) -> ParsingResult<Vec<(String, Type)>> {
+    pub fn parse_function_args(&mut self) -> ParsingResult<Args> {
         let lparen = self.eat()?;
         if let TokenKind::Symbol(SymbolKind::LParen) = lparen.kind {
         } else {
             return Err(ParsingError::UnexpectedToken(lparen));
         }
         let mut args = Vec::new();
+        let mut variadic = false;
         loop {
             let token = self.peek()?;
             match token.kind {
                 TokenKind::Symbol(SymbolKind::RParen) => {
-                    let _ = self.eat()?;
+                    let _rparen = self.eat()?;
                     break;
                 }
                 TokenKind::Symbol(SymbolKind::Comma) => {
+                    let _ = self.eat()?;
+                }
+                TokenKind::Symbol(SymbolKind::Ellipsis) => {
+                    if variadic {
+                        return Err(ParsingError::UnexpectedToken(token.clone()));
+                    }
+                    variadic = true;
                     let _ = self.eat()?;
                 }
                 _ => {
@@ -829,7 +969,11 @@ impl<I: Iterator<Item = Token>> Parser<I> {
                 }
             }
         }
-        Ok(args)
+        Ok(Args {
+            args,
+            variadic,
+            span: NodeLocation::new(lparen.location, self.get_location()?),
+        })
     }
 
     pub fn parse_fn_name(&mut self) -> ParsingResult<Identifier> {
@@ -837,50 +981,62 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         match token.kind {
             TokenKind::Ident(s) => Ok(Identifier {
                 value: s,
-                span: NodeSpan {
-                    start: token.location,
-                    end: token.location,
-                },
+                span: NodeLocation::new(token.location, token.location),
             }),
             _ => Err(ParsingError::UnexpectedToken(token)),
         }
     }
 
-    pub fn parse_fn_ret_ty(&mut self) -> ParsingResult<Type> {
-        let _arrow = self.eat_and_assert(TokenKind::Symbol(SymbolKind::RArrow))?;
+    pub fn parse_fn_ret_ty(&mut self) -> ParsingResult<Option<Type>> {
+        match self.peek()?.kind {
+            TokenKind::Symbol(SymbolKind::RArrow) => self.eat()?,
+            _ => return Ok(None),
+        };
         let token = self.eat()?;
-        match &token.kind {
+        let kind = match &token.kind {
             TokenKind::Ident(s) => match s.as_str() {
-                "int" => Ok(Type::Int),
-                "float" => Ok(Type::Float),
-                "bool" => Ok(Type::Bool),
-                "string" => Ok(Type::String),
-                _ => Ok(Type::Struct(s.to_owned())),
+                "int" => TypeKind::Int,
+                "float" => TypeKind::Float,
+                "bool" => TypeKind::Bool,
+                "string" => TypeKind::String,
+                _ => TypeKind::Struct(s.to_owned()),
             },
-            _ => Err(ParsingError::UnexpectedToken(token)),
-        }
+            _ => return Err(ParsingError::UnexpectedToken(token)),
+        };
+        Ok(Some(Type {
+            kind,
+            span: NodeLocation::new(token.location, token.location),
+        }))
     }
 
     pub fn parse_fn_sig(&mut self) -> ParsingResult<FunctionSignature> {
         let name = self.parse_fn_name()?;
 
-        let _coloncolon = self.eat()?;
+        let _coloncolon = self.eat_and_assert(TokenKind::Symbol(SymbolKind::ColonColon))?;
         let args = self.parse_function_args()?;
         let ret_ty = self.parse_fn_ret_ty()?;
-
         Ok(FunctionSignature { name, args, ret_ty })
     }
 
     pub fn parse_function(&mut self) -> ParsingResult<Function> {
         let sig = self.parse_fn_sig()?;
+        match self.peek()?.kind {
+            TokenKind::Symbol(SymbolKind::Semicolon) => {
+                let _ = self.eat()?;
+                return Ok(Function { sig, body: None });
+            }
+            _ => {}
+        }
         let body = self.parse_block()?;
 
-        Ok(Function { sig, body })
+        Ok(Function {
+            sig,
+            body: Some(body),
+        })
     }
 
     pub fn parse_block(&mut self) -> ParsingResult<Block> {
-        // eat '{'
-        self.eat()?;
+        let lbrace = self.eat_and_assert(TokenKind::Symbol(SymbolKind::LBrace))?;
         let mut stmts = Vec::new();
         while let Ok(t) = self.peek() {
             match t.kind {
@@ -893,26 +1049,17 @@ impl<I: Iterator<Item = Token>> Parser<I> {
             }
         }
 
-        self.eat()?;
-        Ok(Block { stmts })
+        let rbrace = self.eat_and_assert(TokenKind::Symbol(SymbolKind::RBrace))?;
+        Ok(Block {
+            stmts,
+            span: NodeLocation::new(lbrace.location, rbrace.location),
+        })
     }
 
     pub fn parse(self) -> ParsingResult<Ast> {
         let mut nodes = Vec::new();
         for item in self {
-            let item = item?;
-            match item.kind {
-                ItemKind::Import(s) => {
-                    let path = std::path::Path::new(&s);
-                    let file = std::fs::read_to_string(path).expect("could not read file");
-                    let lexer = crate::tokenizing::Lexer::new(&file);
-                    let tokens = lexer.collect::<Vec<_>>();
-                    let parser = Parser::new(tokens.into_iter());
-                    let ast = parser.parse()?;
-                    nodes.extend(ast.nodes);
-                }
-                _ => nodes.push(item),
-            }
+            nodes.push(item?);
         }
         Ok(Ast { nodes })
     }

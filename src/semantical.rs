@@ -3,32 +3,30 @@ use std::collections::HashMap;
 use crate::{
     chainmap::ChainMap,
     parsing::{
-        self, Assignment, Ast, BinOpKind, Block, Expr, ExprKind, Function, FunctionSignature,
-        Identifier, ItemKind, LiteralKind, NodeSpan, Statement, StatementKind, Struct, Type,
-        UnaryOpKind,
+        self, Arg, Args, Assignment, Ast, BinOpKind, Block, CallArgs, Expr, ExprKind, Function, FunctionSignature, Identifier, ItemKind, LiteralKind, NodeLocation, Statement, StatementKind, Struct, Type, TypeKind, UnaryOpKind
     },
     tokenizing::TokenLocation,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Variable {
-    pub name: String,
-    pub ty: Type,
+    pub name: Identifier,
+    pub ty: TypeKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ExtendedFunction {
     pub inner: Function,
     pub variables: Vec<Variable>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct ExtendedStruct {
     pub inner: Struct,
-    pub fields: HashMap<String, (Type, usize)>,
+    pub fields: HashMap<String, (TypeKind, usize)>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct Module {
     pub name: String,
     pub functions: Vec<ExtendedFunction>,
@@ -36,7 +34,7 @@ pub struct Module {
 }
 
 pub struct SemanticAnalyzer {
-    variables: ChainMap<String, Type>,
+    variables: ChainMap<String, TypeKind>,
     function_variables: Vec<Variable>,
     functions: HashMap<String, FunctionSignature>,
     structs: HashMap<String, Struct>,
@@ -44,61 +42,58 @@ pub struct SemanticAnalyzer {
     current_function: Option<String>,
 }
 
-const BUILTINS: &[(&str, Type, Type)] = &[
-    ("iprint", Type::Int, Type::Int),
-    ("fprint", Type::Float, Type::Int),
-    ("bprint", Type::Bool, Type::Int),
-    ("printf", Type::String, Type::Int),
-];
+//const BUILTINS: &[(&str, Type, Type)] = &[
+//    ("iprint", Type::Int, Type::Int),
+//    ("fprint", Type::Float, Type::Int),
+//    ("bprint", Type::Bool, Type::Int),
+//    ("printf", Type::String, Type::Int),
+//];
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum SemanticError {
     ExpressionTypeMismatch {
-        expected: Type,
-        found: Type,
+        expected: TypeKind,
+        found: TypeKind,
         expr: Expr,
     },
     FunctionNotFound {
-        name: String,
-        expr: Expr,
+        ident: Identifier,
     },
     ArgumentCountMismatch {
         expected: usize,
         found: usize,
-        expr: Expr,
+        args: CallArgs,
     },
     ArgumentTypeMismatch {
-        expected: Type,
-        found: Type,
-        expr: Expr,
+        expected: TypeKind,
+        found: TypeKind,
+        arg: Expr,
     },
     BreakOutsideOfLoop {
         statement: Statement,
     },
     DoubleVariableDeclaration {
-        name: Identifier,
-        expr: Expr,
+        ident: Identifier,
     },
     DoubleFunctionDeclaration {
-        name: Identifier,
+        ident: Identifier,
     },
     DoubleStructDeclaration {
-        name: Identifier,
+        ident: Identifier,
     },
     VariableNotFound {
-        name: Identifier,
-        expr: Expr,
+        ident: Identifier,
     },
     ReturnOutsideOfFunction {
         stmt: Statement,
     },
     ReturnTypeMismatch {
-        expected: Type,
-        found: Type,
+        expected: TypeKind,
+        found: TypeKind,
         statement: Statement,
     },
     UnsupportedBinOp {
-        ty: Type,
+        ty: TypeKind,
         expr: Expr,
     },
     UnreachableCode {
@@ -110,19 +105,20 @@ impl SemanticError {
     pub fn to_string(self, source: &str) -> String {
         let span = match &self {
             SemanticError::ExpressionTypeMismatch { expr, .. } => expr.span,
-            SemanticError::FunctionNotFound { expr, .. } => expr.span,
-            SemanticError::ArgumentCountMismatch { expr, .. } => expr.span,
-            SemanticError::ArgumentTypeMismatch { expr, .. } => expr.span,
+            SemanticError::FunctionNotFound { ident, .. } => ident.span,
+            SemanticError::ArgumentCountMismatch { args, .. } => args.span,
+            SemanticError::ArgumentTypeMismatch { arg, .. } => arg.span,
             SemanticError::BreakOutsideOfLoop { statement } => statement.span,
-            SemanticError::DoubleVariableDeclaration { expr, .. } => expr.span,
-            SemanticError::DoubleFunctionDeclaration { name } => name.span,
-            SemanticError::DoubleStructDeclaration { name } => name.span,
-            SemanticError::VariableNotFound { expr, .. } => expr.span,
+            SemanticError::DoubleVariableDeclaration { ident, .. } => ident.span,
+            SemanticError::DoubleFunctionDeclaration { ident } => ident.span,
+            SemanticError::DoubleStructDeclaration { ident } => ident.span,
+            SemanticError::VariableNotFound { ident } => ident.span,
             SemanticError::ReturnOutsideOfFunction { stmt } => stmt.span,
             SemanticError::ReturnTypeMismatch { statement, .. } => statement.span,
             SemanticError::UnsupportedBinOp { expr, .. } => expr.span,
             SemanticError::UnreachableCode { statement } => statement.span,
         };
+        dbg!(&span);
 
         let error_text = match &self {
             SemanticError::ExpressionTypeMismatch {
@@ -133,8 +129,8 @@ impl SemanticError {
                     expected, found
                 )
             }
-            SemanticError::FunctionNotFound { name, .. } => {
-                format!("function '{}' is not defined", name)
+            SemanticError::FunctionNotFound { ident, .. } => {
+                format!("function '{}' is not defined", ident.value)
             }
             SemanticError::ArgumentCountMismatch {
                 expected, found, ..
@@ -153,17 +149,17 @@ impl SemanticError {
                 )
             }
             SemanticError::BreakOutsideOfLoop { .. } => "cannot break outside of loop".to_string(),
-            SemanticError::DoubleVariableDeclaration { name, .. } => {
-                format!("variable '{}' already declared", name.value)
+            SemanticError::DoubleVariableDeclaration { ident } => {
+                format!("variable '{}' already declared", ident.value)
             }
-            SemanticError::DoubleFunctionDeclaration { name } => {
-                format!("function '{}' already declared", name.value)
+            SemanticError::DoubleFunctionDeclaration { ident } => {
+                format!("function '{}' already declared", ident.value)
             }
-            SemanticError::DoubleStructDeclaration { name } => {
-                format!("struct '{}' already declared", name.value)
+            SemanticError::DoubleStructDeclaration { ident } => {
+                format!("struct '{}' already declared", ident.value)
             }
-            SemanticError::VariableNotFound { name, .. } => {
-                format!("variable '{}' is not defined", name.value)
+            SemanticError::VariableNotFound { ident } => {
+                format!("variable '{}' is not defined", ident.value)
             }
             SemanticError::ReturnOutsideOfFunction { .. } => {
                 "cannot return outside of function".to_string()
@@ -181,9 +177,26 @@ impl SemanticError {
             }
             SemanticError::UnreachableCode { .. } => "this code is unreachable".to_string(),
         };
-
-        let error = crate::error::error((span.start.line_span.0, span.end.line_span.1), (span.start.col_span.0, span.end.col_span.1), source);
+        let error = crate::error::error(span.line_span(), span.col_span(), source);
         format!("{}\n{}", error_text, error)
+    }
+
+    pub fn file_id(&self) -> usize {
+        match self {
+            SemanticError::ExpressionTypeMismatch { expr, .. } => expr.span,
+            SemanticError::FunctionNotFound { ident } => ident.span,
+            SemanticError::ArgumentCountMismatch { args, .. } => args.span,
+            SemanticError::ArgumentTypeMismatch { arg, .. } => arg.span,
+            SemanticError::BreakOutsideOfLoop { statement } => statement.span,
+            SemanticError::DoubleVariableDeclaration { ident } => ident.span,
+            SemanticError::DoubleFunctionDeclaration { ident } => ident.span,
+            SemanticError::DoubleStructDeclaration { ident } => ident.span,
+            SemanticError::VariableNotFound { ident } => ident.span,
+            SemanticError::ReturnOutsideOfFunction { stmt } => stmt.span,
+            SemanticError::ReturnTypeMismatch { statement, .. } => statement.span,
+            SemanticError::UnsupportedBinOp { expr, .. } => expr.span,
+            SemanticError::UnreachableCode { statement } => statement.span,
+        }.file_id()
     }
 }
 
@@ -208,7 +221,7 @@ impl SemanticAnalyzer {
             structs: HashMap::new(),
         };
 
-        self.declare_builtins();
+        //self.declare_builtins();
         self.declare_structs(&ast)?;
         self.declare_functions(&ast)?;
 
@@ -230,28 +243,18 @@ impl SemanticAnalyzer {
         Ok(module)
     }
 
-    fn declare_builtins(&mut self) {
-        for (name, arg_ty, ret_ty) in BUILTINS {
-            let sig = FunctionSignature {
-                name: Identifier {
-                    value: name.to_string(),
-                    span: NodeSpan {
-                        start: TokenLocation {
-                            line_span: (0, 0),
-                            col_span: (0, 0),
-                        },
-                        end: TokenLocation {
-                            line_span: (0, 0),
-                            col_span: (0, 0),
-                        },
-                    },
-                },
-                args: vec![("arg".to_string(), arg_ty.clone())],
-                ret_ty: ret_ty.clone(),
-            };
-            self.functions.insert(sig.name.value.clone(), sig);
-        }
-    }
+    //fn declare_builtins(&mut self) {
+    //    for (name, arg_ty, ret_ty) in BUILTINS {
+    //        let sig = FunctionSignature {
+    //            name: Identifier {
+    //                value: name.to_string(),
+    //                span: NodeLocation::NULL,               },
+    //            args: vec![("arg".to_string(), arg_ty.clone())],
+    //            ret_ty: ret_ty.clone(),
+    //        };
+    //        self.functions.insert(sig.name.value.clone(), sig);
+    //    }
+    //}
 
     fn declare_functions(&mut self, ast: &Ast) -> SemanticResult<()> {
         for item in &ast.nodes {
@@ -259,7 +262,7 @@ impl SemanticAnalyzer {
                 ItemKind::Function(func) => {
                     if self.functions.contains_key(&func.sig.name.value) {
                         return Err(SemanticError::DoubleFunctionDeclaration {
-                            name: func.sig.name.clone(),
+                            ident: func.sig.name.clone(),
                         });
                     }
                     self.functions
@@ -277,7 +280,7 @@ impl SemanticAnalyzer {
                 ItemKind::Struct(struct_) => {
                     if self.structs.contains_key(&struct_.name.value) {
                         return Err(SemanticError::DoubleStructDeclaration {
-                            name: struct_.name.clone(),
+                            ident: struct_.name.clone(),
                         });
                     }
                     let name = struct_.name.value.clone();
@@ -292,16 +295,20 @@ impl SemanticAnalyzer {
     fn analyze_function(&mut self, func: Function) -> SemanticResult<ExtendedFunction> {
         self.function_variables.clear();
         self.variables.push();
-        for arg in &func.sig.args {
+        for arg in &*func.sig.args {
             let var = Variable {
-                name: arg.0.clone(),
-                ty: arg.1.clone(),
+                name: arg.name.clone(),
+                ty: arg.ty.kind.clone(),
             };
-            self.variables.insert(var.name.clone(), var.ty).unwrap();
+            self.variables
+                .insert(var.name.value.clone(), var.ty)
+                .unwrap();
         }
 
         self.current_function = Some(func.sig.name.value.clone());
-        self.analyze_body(&func.body)?;
+        if let Some(body) = &func.body {
+            self.analyze_body(body)?;
+        }
         self.current_function = None;
         self.variables.pop();
 
@@ -318,7 +325,7 @@ impl SemanticAnalyzer {
     fn analyze_struct(&mut self, struct_: Struct) -> SemanticResult<ExtendedStruct> {
         let mut fields = HashMap::new();
         for (i, field) in struct_.fields.iter().enumerate() {
-            fields.insert(field.name.value.clone(), (field.ty.clone(), i));
+            fields.insert(field.name.value.clone(), (field.ty.kind.clone(), i));
         }
         Ok(ExtendedStruct {
             inner: struct_,
@@ -382,25 +389,25 @@ impl SemanticAnalyzer {
         };
         if self.variables.contains_key(&ident.value) {
             return Err(SemanticError::DoubleVariableDeclaration {
-                name: ident.clone(),
-                expr: decl.assignee.clone(),
+                ident: ident.clone(),
             });
         }
         let var = Variable {
-            name: ident.value.clone(),
+            name: ident.clone(),
             ty: self.analyze_expr(&decl.value)?,
         };
 
-        self.variables.insert(var.name.clone(), var.ty.clone());
+        self.variables
+            .insert(var.name.value.clone(), var.ty.clone());
         self.function_variables.push(var);
         Ok(())
     }
 
     fn analyze_if(&mut self, cond: &Expr, then: &Block, or: &Option<Block>) -> SemanticResult<()> {
         let cond_ty = self.analyze_expr(cond)?;
-        if cond_ty != Type::Bool {
+        if cond_ty != TypeKind::Bool {
             return Err(SemanticError::ExpressionTypeMismatch {
-                expected: Type::Bool,
+                expected: TypeKind::Bool,
                 found: cond_ty,
                 expr: cond.clone(),
             });
@@ -428,7 +435,7 @@ impl SemanticAnalyzer {
         let ret_ty = if let Some(expr) = expr {
             self.analyze_expr(expr)?
         } else {
-            Type::Void
+            TypeKind::Void
         };
 
         if let Some(func) = self
@@ -436,9 +443,17 @@ impl SemanticAnalyzer {
             .as_ref()
             .and_then(|name| self.functions.get(name))
         {
-            if ret_ty != func.ret_ty {
+            if let Some(func_ret) = &func.ret_ty {
+                if ret_ty != func_ret.kind {
+                    return Err(SemanticError::ReturnTypeMismatch {
+                        expected: func_ret.kind.clone(),
+                        found: ret_ty,
+                        statement: statement.clone(),
+                    });
+                }
+            } else if ret_ty != TypeKind::Void {
                 return Err(SemanticError::ReturnTypeMismatch {
-                    expected: func.ret_ty.clone(),
+                    expected: TypeKind::Void,
                     found: ret_ty,
                     statement: statement.clone(),
                 });
@@ -451,53 +466,60 @@ impl SemanticAnalyzer {
         Ok(())
     }
 
-    fn analyze_expr(&self, expr: &Expr) -> SemanticResult<Type> {
+    fn analyze_expr(&self, expr: &Expr) -> SemanticResult<TypeKind> {
         match &expr.kind {
             ExprKind::Literal(lit_kind) => match lit_kind {
-                LiteralKind::Int(_) => Ok(Type::Int),
-                LiteralKind::Float(_) => Ok(Type::Float),
-                LiteralKind::Bool(_) => Ok(Type::Bool),
-                LiteralKind::String(_) => Ok(Type::String),
+                LiteralKind::Int(_) => Ok(TypeKind::Int),
+                LiteralKind::Float(_) => Ok(TypeKind::Float),
+                LiteralKind::Bool(_) => Ok(TypeKind::Bool),
+                LiteralKind::String(_) => Ok(TypeKind::String),
             },
             ExprKind::Var(var) => {
                 if let Some(var) = self.variables.get(&var.value) {
                     Ok(var.clone())
                 } else {
                     Err(SemanticError::VariableNotFound {
-                        name: var.clone(),
-                        expr: expr.clone(),
+                        ident: var.clone(),
                     })
                 }
             }
             ExprKind::BinOp(_) => self.analyze_binop(expr),
             ExprKind::UnaryOp { .. } => self.analyze_unaryop(expr),
             ExprKind::Call { name, args } => {
-                if let Some(func) = self.functions.get(name) {
-                    if func.args.len() != args.len() {
-                        panic!("argument count mismatch")
+                if let Some(func) = self.functions.get(&name.value) {
+                    if func.args.len() != args.len() && !func.args.variadic {
+                        return Err(SemanticError::ArgumentCountMismatch {
+                            expected: func.args.len(),
+                            found: args.len(),
+                            args: args.clone(),
+                        });
                     }
+                    let diff = args.len() - func.args.len();
                     for (arg, expected) in args.iter().zip(func.args.iter()) {
                         let arg_ty = self.analyze_expr(arg)?;
-                        if arg_ty != expected.1 {
+                        if arg_ty != expected.ty.kind {
                             return Err(SemanticError::ArgumentTypeMismatch {
-                                expected: expected.1.clone(),
+                                expected: expected.ty.kind.clone(),
                                 found: arg_ty,
-                                expr: arg.clone(),
+                                arg: arg.clone(),
                             });
                         }
                     }
-                    Ok(func.ret_ty.clone())
+                    Ok(func
+                        .ret_ty
+                        .as_ref()
+                        .map(|ty| ty.kind.clone())
+                        .unwrap_or(TypeKind::Void))
                 } else {
                     Err(SemanticError::FunctionNotFound {
-                        name: name.clone(),
-                        expr: expr.clone(),
+                        ident: name.clone(),
                     })
                 }
             }
             ExprKind::FieldAccess { lhs, field } => {
                 let lhs_ty = self.analyze_expr(lhs)?;
                 let struct_ = match lhs_ty {
-                    Type::Struct(name) => {
+                    TypeKind::Struct(name) => {
                         if let Some(struct_) = self.structs.get(&name) {
                             struct_
                         } else {
@@ -507,7 +529,7 @@ impl SemanticAnalyzer {
                     _ => panic!("field access on non-struct type"),
                 };
                 if let Some(field) = struct_.fields.iter().find(|f| f.name.value == *field.value) {
-                    Ok(field.ty.clone())
+                    Ok(field.ty.kind.clone())
                 } else {
                     panic!("field not found")
                 }
@@ -522,15 +544,15 @@ impl SemanticAnalyzer {
                             .map(|f| f.ty.clone())
                             .unwrap();
                         let expr_ty = self.analyze_expr(expr)?;
-                        if field_ty != expr_ty {
+                        if field_ty.kind != expr_ty {
                             return Err(SemanticError::ExpressionTypeMismatch {
-                                expected: field_ty,
+                                expected: field_ty.kind,
                                 found: expr_ty,
                                 expr: expr.clone(),
                             });
                         }
                     }
-                    Ok(Type::Struct(name.value.clone()))
+                    Ok(TypeKind::Struct(name.value.clone()))
                 } else {
                     panic!("struct not found")
                 }
@@ -538,7 +560,7 @@ impl SemanticAnalyzer {
         }
     }
 
-    fn analyze_binop(&self, expr: &Expr) -> SemanticResult<Type> {
+    fn analyze_binop(&self, expr: &Expr) -> SemanticResult<TypeKind> {
         let binop = match expr {
             Expr {
                 kind: ExprKind::BinOp(binop),
@@ -556,9 +578,11 @@ impl SemanticAnalyzer {
             });
         }
 
-        if lhs_ty == Type::Float && (binop.kind == BinOpKind::And || binop.kind == BinOpKind::Or) {
+        if lhs_ty == TypeKind::Float
+            && (binop.kind == BinOpKind::And || binop.kind == BinOpKind::Or)
+        {
             return Err(SemanticError::UnsupportedBinOp {
-                ty: Type::Float,
+                ty: TypeKind::Float,
                 expr: expr.clone(),
             });
         }
@@ -574,13 +598,13 @@ impl SemanticAnalyzer {
             | parsing::BinOpKind::Lt
             | parsing::BinOpKind::Leq
             | parsing::BinOpKind::Gt
-            | parsing::BinOpKind::Geq => Type::Bool,
-            parsing::BinOpKind::And | parsing::BinOpKind::Or => Type::Bool,
+            | parsing::BinOpKind::Geq => TypeKind::Bool,
+            parsing::BinOpKind::And | parsing::BinOpKind::Or => TypeKind::Bool,
         };
         Ok(return_ty)
     }
 
-    fn analyze_unaryop(&self, expr: &Expr) -> SemanticResult<Type> {
+    fn analyze_unaryop(&self, expr: &Expr) -> SemanticResult<TypeKind> {
         let (kind, rhs) = match expr {
             Expr {
                 kind: ExprKind::UnaryOp { kind, rhs },
@@ -590,7 +614,7 @@ impl SemanticAnalyzer {
         };
         let rhs_ty = self.analyze_expr(rhs)?;
         match kind {
-            UnaryOpKind::Cast(ty) => Ok(ty.clone()),
+            UnaryOpKind::Cast(ty) => Ok(ty.kind.clone()),
             _ => Ok(rhs_ty),
         }
     }

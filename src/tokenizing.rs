@@ -1,6 +1,7 @@
 use std::{iter::Peekable, str::Chars};
 
 pub struct Lexer<'a> {
+    file_id: usize,
     data: Peekable<Chars<'a>>,
     line: u32,
     column: u32,
@@ -37,6 +38,7 @@ pub enum SymbolKind {
     Comma,
     RArrow,
     Colon,
+    Ellipsis,
 }
 
 impl SymbolKind {
@@ -69,6 +71,7 @@ impl SymbolKind {
             "," => Some(Self::Comma),
             "->" => Some(Self::RArrow),
             ":" => Some(Self::Colon),
+            "..." => Some(Self::Ellipsis),
             _ => None,
         }
     }
@@ -95,8 +98,47 @@ pub enum TokenKind {
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub struct TokenLocation {
-    pub line_span: (u32, u32),
-    pub col_span: (u32, u32),
+    file_id: usize,
+    start: (u32, u32),
+    end: (u32, u32),
+}
+
+impl TokenLocation {
+    pub fn new(file_id: usize, start: (u32, u32), end: (u32, u32)) -> Self {
+        Self {
+            file_id,
+            start,
+            end,
+        }
+    }
+
+    pub fn file_id(&self) -> usize {
+        self.file_id
+    }
+
+    pub fn line_span(&self) -> (u32, u32) {
+        (self.start.0, self.end.0)
+    }
+
+    pub fn col_span(&self) -> (u32, u32) {
+        (self.start.1, self.end.1)
+    }
+
+    pub fn line_start(&self) -> u32 {
+        self.line_span().0
+    }
+
+    pub fn line_end(&self) -> u32 {
+        self.line_span().1
+    }
+
+    pub fn col_start(&self) -> u32 {
+        self.col_span().0
+    }
+
+    pub fn col_end(&self) -> u32 {
+        self.col_span().1
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -106,8 +148,9 @@ pub struct Token {
 }
 
 impl<'a> Lexer<'a> {
-    pub fn new(input: &'a str) -> Self {
+    pub fn new(input: &'a str, file_id: usize) -> Self {
         Self {
+            file_id,
             data: input.chars().peekable(),
             line: 1,
             column: 1,
@@ -146,10 +189,7 @@ impl<'a> Lexer<'a> {
         let end = (self.line, self.column);
         (
             value,
-            TokenLocation {
-                line_span: (start.0, end.0),
-                col_span: (start.1, end.1),
-            },
+            TokenLocation::new(self.file_id, start, end),
         )
     }
 
@@ -232,12 +272,12 @@ impl<'a> Lexer<'a> {
             if should_break {
                 return true;
             }
-            if count > 2 {
+            if count > 3 {
                 return true;
             }
             match c {
-                ':' | '=' | '!' | '<' | '>' | '&' | '|' | '-' => (),
-                '+' | '*' | '/' | '(' | ')' | ';' | '{' | '}' | ',' | '%' | '@' | '.' => {
+                ':' | '=' | '!' | '<' | '>' | '&' | '|' | '-' | '.' => (),
+                '+' | '*' | '/' | '(' | ')' | ';' | '{' | '}' | ',' | '%' | '@' => {
                     should_break = true;
                 }
                 _ => return true,

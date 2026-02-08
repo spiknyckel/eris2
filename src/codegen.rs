@@ -1,9 +1,9 @@
-use std::{collections::HashMap, path::Path};
+use std::{collections::HashMap, path::{Path, PathBuf}, process::Command};
 
 use crate::{
     parsing::{
         Assignment, BinOp, BinOpKind, Block, Expr, ExprKind, Identifier, LiteralKind, Statement,
-        StatementKind, Type, UnaryOpKind,
+        StatementKind, TypeKind, UnaryOpKind,
     },
     semantical::{ExtendedFunction, ExtendedStruct, Module},
 };
@@ -26,17 +26,17 @@ pub struct CodeGen<'a> {
     loop_exits: Vec<inkwell::basic_block::BasicBlock<'a>>,
 }
 
-impl Type {
+impl TypeKind {
     fn to_llvm<'a>(&self, context: &'a LLVMContext) -> inkwell::types::BasicTypeEnum<'a> {
         match self {
-            Type::Int => context.i64_type().as_basic_type_enum(),
-            Type::Float => context.f64_type().as_basic_type_enum(),
-            Type::Bool => context.bool_type().as_basic_type_enum(),
-            Type::Void => context.i64_type().as_basic_type_enum(),
-            Type::String => context
+            TypeKind::Int => context.i64_type().as_basic_type_enum(),
+            TypeKind::Float => context.f64_type().as_basic_type_enum(),
+            TypeKind::Bool => context.bool_type().as_basic_type_enum(),
+            TypeKind::Void => context.i64_type().as_basic_type_enum(),
+            TypeKind::String => context
                 .ptr_type(AddressSpace::default())
                 .as_basic_type_enum(),
-            Type::Struct(name) => context.get_struct_type(name).unwrap().as_basic_type_enum(),
+            TypeKind::Struct(name) => context.get_struct_type(name).unwrap().as_basic_type_enum(),
         }
     }
 }
@@ -54,20 +54,10 @@ impl<'a> CodeGen<'a> {
         }
     }
 
-    pub fn spit_out(&self) {
-        self.llvm_module.print_to_stderr();
-    }
-
     pub fn verify(&self) -> Result<(), String> {
-        let verify = self.llvm_module.verify();
-        if verify.is_ok() {
-            Ok(())
-        } else {
-            Err(verify.err().unwrap().to_string())
-        }
+        self.llvm_module.verify().map_err(|e| e.to_string())
     }
-
-    pub fn spit_out_object(&self, file_name: &str) {
+    pub fn create_binary(&self, file_name: &str) -> Option<PathBuf> {
         Target::initialize_all(&Default::default());
         let target_triple = TargetMachine::get_default_triple();
         let target = Target::from_triple(&target_triple).unwrap();
@@ -96,31 +86,56 @@ impl<'a> CodeGen<'a> {
 
         // CC
 
-        let executable_file = Path::new(file_name).with_extension("out");
+        #[cfg(target_os = "windows")]
+        let executable_file = Path::new(file_name).with_extension("exe");
+        #[cfg(not(target_os = "windows"))]
+        let executable_file = Path::new(file_name).with_extension("");
 
-        std::process::Command::new("cc")
+        #[cfg(target_os = "windows")]
+        let cc = {
+            let gcc_exists = Command::new("gcc").output().is_ok();
+            let clang_exists = Command::new("clang").output().is_ok();
+            if gcc_exists {
+                "gcc"
+            } else if clang_exists {
+                "clang"
+            } else {
+                panic!("No C compiler found");
+            }
+        };
+        #[cfg(not(target_os = "windows"))]
+        let cc = "cc";
+
+        let res = Command::new(cc)
             .arg(object_file)
             .arg("-o")
-            .arg(executable_file)
-            .status()
-            .unwrap();
+            .arg(&executable_file)
+            .status();
+        if res.is_err() {
+            return None;
+        }
+        Some(executable_file)
     }
 
     pub fn declare_functions(&mut self, module: &Module) {
         // Generate builtin functions
-        self.generate_printf();
-        self.generate_iprint();
-        self.generate_fprint();
-        self.generate_bprint();
+        //self.generate_printf();
+        //self.generate_iprint();
+        //self.generate_fprint();
+        //self.generate_bprint();
 
         // Declare all user functions
         for function in module.functions.iter() {
             let mut args = vec![];
             for arg in function.inner.sig.args.iter() {
-                args.push(arg.1.to_llvm(self.context).into());
+                args.push(arg.ty.to_llvm(self.context).into());
             }
-            let ret_ty = function.inner.sig.ret_ty.to_llvm(self.context);
-            let function_type = ret_ty.fn_type(&args, false);
+            let ret_ty = if let Some(ret_ty) = &function.inner.sig.ret_ty {
+                ret_ty.to_llvm(self.context)
+            } else {
+                TypeKind::Void.to_llvm(self.context)
+            };
+            let function_type = ret_ty.fn_type(&args, function.inner.sig.args.variadic);
             self.llvm_module
                 .add_function(&function.inner.sig.name.value, function_type, None);
         }
@@ -143,7 +158,7 @@ impl<'a> CodeGen<'a> {
             }
             struct_type.set_body(&members, false);
         }
-        self.struct_types = module.structs.clone();
+        self.struct_types.clone_from(&module.structs);
     }
 
     pub fn generate(&mut self, module: Module) {
@@ -162,7 +177,7 @@ impl<'a> CodeGen<'a> {
 
     pub fn generate_iprint(&mut self) {
         let printf = self.llvm_module.get_function("printf").unwrap();
-        let int_type = Type::Int.to_llvm(self.context);
+        let int_type = TypeKind::Int.to_llvm(self.context);
         let iprint_type = self.context.i64_type().fn_type(&[int_type.into()], false);
         let iprint = self.llvm_module.add_function("iprint", iprint_type, None);
         let basic_block = self.context.append_basic_block(iprint, "entry");
@@ -182,7 +197,7 @@ impl<'a> CodeGen<'a> {
 
     pub fn generate_fprint(&mut self) {
         let printf = self.llvm_module.get_function("printf").unwrap();
-        let float_type = Type::Float.to_llvm(self.context);
+        let float_type = TypeKind::Float.to_llvm(self.context);
         let fprint_type = self.context.i64_type().fn_type(&[float_type.into()], false);
         let fprint = self.llvm_module.add_function("fprint", fprint_type, None);
         let basic_block = self.context.append_basic_block(fprint, "entry");
@@ -202,7 +217,7 @@ impl<'a> CodeGen<'a> {
 
     pub fn generate_bprint(&mut self) {
         let printf = self.llvm_module.get_function("printf").unwrap();
-        let bool_type = Type::Bool.to_llvm(self.context);
+        let bool_type = TypeKind::Bool.to_llvm(self.context);
         let bprint_type = self.context.i64_type().fn_type(&[bool_type.into()], false);
         let bprint = self.llvm_module.add_function("bprint", bprint_type, None);
         let basic_block = self.context.append_basic_block(bprint, "entry");
@@ -242,6 +257,9 @@ impl<'a> CodeGen<'a> {
     }
 
     pub fn generate_function(&mut self, function: &ExtendedFunction) {
+        if function.inner.body.is_none() {
+            return;
+        }
         let llvm_function = self
             .llvm_module
             .get_function(&function.inner.sig.name.value)
@@ -249,7 +267,7 @@ impl<'a> CodeGen<'a> {
         let basic_block = self.context.append_basic_block(llvm_function, "entry");
         self.llvm_builder.position_at_end(basic_block);
         for (i, arg) in llvm_function.get_param_iter().enumerate() {
-            let arg_name = &function.inner.sig.args[i].0;
+            let arg_name = &function.inner.sig.args[i].name.value;
             let alloca = self
                 .llvm_builder
                 .build_alloca(arg.get_type(), arg_name)
@@ -262,13 +280,20 @@ impl<'a> CodeGen<'a> {
             let var_type = variable.ty.to_llvm(self.context);
             let var = self
                 .llvm_builder
-                .build_alloca(var_type, &variable.name)
+                .build_alloca(var_type, &*variable.name)
                 .unwrap();
             self.variables
-                .insert(variable.name.clone(), (var, var_type));
+                .insert(variable.name.value.clone(), (var, var_type));
         }
-        for statement in function.inner.body.stmts.iter() {
-            self.generate_statement(statement);
+        let exited = self.generate_block(function.inner.body.as_ref().unwrap(), basic_block);
+        if !exited {
+            let ret_ty = if let Some(ret_ty) = &function.inner.sig.ret_ty {
+                ret_ty.to_llvm(self.context)
+            } else {
+                TypeKind::Void.to_llvm(self.context)
+            };
+            let value = ret_ty.const_zero();
+            self.llvm_builder.build_return(Some(&value)).unwrap();
         }
     }
 
@@ -571,10 +596,10 @@ impl<'a> CodeGen<'a> {
                 .build_not(value.into_int_value(), "not")
                 .unwrap()
                 .into(),
-            UnaryOpKind::Cast(ty) => match (value.get_type(), ty) {
-                (inkwell::types::BasicTypeEnum::FloatType(_), Type::Float) => value,
-                (inkwell::types::BasicTypeEnum::IntType(_), Type::Int) => value,
-                (inkwell::types::BasicTypeEnum::IntType(_), Type::Float) => self
+            UnaryOpKind::Cast(ty) => match (value.get_type(), &ty.kind) {
+                (inkwell::types::BasicTypeEnum::FloatType(_), TypeKind::Float) => value,
+                (inkwell::types::BasicTypeEnum::IntType(_), TypeKind::Int) => value,
+                (inkwell::types::BasicTypeEnum::IntType(_), TypeKind::Float) => self
                     .llvm_builder
                     .build_signed_int_to_float(
                         value.into_int_value(),
@@ -583,7 +608,7 @@ impl<'a> CodeGen<'a> {
                     )
                     .unwrap()
                     .into(),
-                (inkwell::types::BasicTypeEnum::FloatType(_), Type::Int) => self
+                (inkwell::types::BasicTypeEnum::FloatType(_), TypeKind::Int) => self
                     .llvm_builder
                     .build_float_to_signed_int(
                         value.into_float_value(),
@@ -628,12 +653,12 @@ impl<'a> CodeGen<'a> {
         let function = current_block.get_parent().unwrap();
         let then_block = self.context.append_basic_block(function, "if_then");
         let exited_early = self.generate_block(then, then_block);
+        let end_block = self.context.append_basic_block(function, "if_end");
         if !exited_early {
             self.llvm_builder
-                .build_unconditional_branch(then_block)
+                .build_unconditional_branch(end_block)
                 .unwrap();
         }
-        let end_block = self.context.append_basic_block(function, "if_end");
         if let Some(or) = or {
             let or_block = self.context.append_basic_block(function, "if_or");
             let exited_early = self.generate_block(or, or_block);

@@ -1,6 +1,7 @@
 mod chainmap;
-pub mod codegen;
-pub mod parsing;
-pub mod semantical;
-pub mod tokenizing;
+mod codegen;
+pub mod compiler;
 pub mod error;
+mod parsing;
+mod semantical;
+mod tokenizing;
