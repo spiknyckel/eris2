@@ -606,6 +606,10 @@ impl<I: Iterator<Item = Token>> Parser<I> {
         match value.as_str() {
             "if" => {
                 let _ = self.eat()?;
+                let open_paren = self.peek()?;
+                if TokenKind::Symbol(SymbolKind::LParen) != open_paren.kind {
+                    return Err(ParsingError::UnexpectedToken(open_paren.clone()));
+                }
                 let cond = self.parse_expr(0)?;
                 let then = self.parse_block()?;
                 let or = if let Ok(token) = self.peek() {

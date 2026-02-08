@@ -5,9 +5,8 @@ fib :: (n: int) -> int {
     counter := 1;
     loop {
         counter = counter + 1;
-        if counter > n {
+        if (counter > n) {
             break;
-            iprint(n);
         }
         a = b;
         b = c;
@@ -17,7 +16,7 @@ fib :: (n: int) -> int {
 }
 
 main :: () -> int {
-    result := fib(230);
+    result := fib(30);
     iprint(result);
     return 0;
 }
